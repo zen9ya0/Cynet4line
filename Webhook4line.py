@@ -5,9 +5,15 @@ import os
 import threading
 import time
 import json
-from linebot import LineBotApi, WebhookHandler
-from linebot.exceptions import InvalidSignatureError
-from linebot.models import MessageEvent, TextMessage, TextSendMessage
+from linebot.v3 import WebhookHandler
+from linebot.v3.messaging import Configuration, ApiClient, MessagingApi
+from linebot.v3.webhooks import MessageEvent
+from linebot.v3.messaging.models import (
+    TextMessage,
+    Message,
+    BroadcastRequest,
+    ReplyMessageRequest
+)
 
 app = Flask(__name__)
 
@@ -16,62 +22,85 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # 設定 LINE Bot API
-access_token = os.getenv('LINE_CHANNEL_ACCESS_TOKEN')
-secret = os.getenv('LINE_CHANNEL_SECRET')
+channel_access_token = os.getenv('LINE_CHANNEL_ACCESS_TOKEN')
+channel_secret = os.getenv('LINE_CHANNEL_SECRET')
 
-if access_token is None or secret is None:
+if channel_access_token is None or channel_secret is None:
     logger.error("請確保環境變數已正確設置。")
     exit(1)
 
-line_bot_api = LineBotApi(access_token)
-handler = WebhookHandler(secret)
+# 初始化 LINE API 客戶端
+configuration = Configuration(access_token=channel_access_token)
+handler = WebhookHandler(channel_secret)
 
 # 儲存最新的警報信息
 latest_alerts = ""
 
+def split_message(text, max_length=4000):
+    """將長消息分割成較小的部分"""
+    messages = []
+    while text:
+        if len(text) <= max_length:
+            messages.append(text)
+            break
+        # 尋找合適的分割點
+        split_point = text.rfind('\n', 0, max_length)
+        if split_point == -1:
+            split_point = max_length
+        messages.append(text[:split_point])
+        text = text[split_point:].lstrip()
+    return messages
+
 def fetch_alerts():
     global latest_alerts
     while True:
-        #logger.info("執行 GetLastAlerts.py...")
         result = subprocess.run(['python3', 'GetLastAlerts.py'], capture_output=True, text=True)
 
         if result.returncode != 0:
-            #logger.error(f"執行 GetLastAlerts.py 時出錯: {result.stderr}")
-            latest_alerts = "執行 GetLastAlerts.py 時出錯"
+            logger.error(f"執行 GetLastAlerts.py 時出錯: {result.stderr}")
         else:
             output = result.stdout.strip()
-            #logger.info(f"從 GetLastAlerts.py 獲取的輸出: {output}")
+            if output:
+                try:
+                    with ApiClient(configuration) as api_client:
+                        line_bot_api = MessagingApi(api_client)
+                        # 分割長消息
+                        messages = split_message(output)
+                        for message in messages:
+                            if message.strip():  # 確保消息不是空的
+                                request = BroadcastRequest(
+                                    messages=[TextMessage(text=message)]
+                                )
+                                line_bot_api.broadcast(request)
+                                time.sleep(1)  # 添加短暫延遲以避免過快發送
+                except Exception as e:
+                    logger.error(f"發送消息時發生錯誤: {e}")
+                    logger.error(f"錯誤詳情: {str(e)}")
 
-            # 檢查輸出是否為純文字
-            if isinstance(output, str) and output:
-                # 將純文字發送到 Line Bot
-                line_bot_api.broadcast(TextSendMessage(text=output))
-            #else:
-            #    logger.error("格式錯誤: 接收到的資料不是純文字。")
-            #    logger.error("格式錯誤: 接收到的資料不是純文字。")
-
-        time.sleep(180)  # 每 5 分鐘執行一次
+        time.sleep(180)  # 每 3 分鐘執行一次
 
 @app.route("/", methods=['POST'])
 def linebot():
-    body = request.get_data(as_text=True)
     signature = request.headers['X-Line-Signature']
+    body = request.get_data(as_text=True)
 
-    # 驗證簽名
     try:
         handler.handle(body, signature)
-        #logger.info("簽名驗證成功。")
-    except InvalidSignatureError:
-        logger.error("無效的簽名。請求被中止。")
+    except Exception as e:
+        logger.error(f"處理 webhook 時發生錯誤: {e}")
         abort(400)
 
     return 'OK'
 
-@handler.add(MessageEvent, message=TextMessage)
-def handle_text_message(event):
-    #logger.info(f"收到消息: {event.message.text}")
-    # 回應用戶的消息
-    line_bot_api.reply_message(event.reply_token, TextSendMessage(text="收到您的消息！"))
+@handler.add(MessageEvent)
+def handle_message(event):
+    with ApiClient(configuration) as api_client:
+        line_bot_api = MessagingApi(api_client)
+        request = ReplyMessageRequest(
+            reply_token=event.reply_token,
+            messages=[TextMessage(text="收到您的消息！")]
+        )
+        line_bot_api.reply_message(request)
 
 if __name__ == "__main__":
     # 啟動定時任務
