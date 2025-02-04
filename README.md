@@ -3,7 +3,10 @@
 #test on ubuntu 20.04 or any linux
 #需要在環境變數中新增: Cynet_username、Cynet_password、LINE_CHANNEL_SECRET、LINE_CHANNEL_ACCESS_TOKEN
 ###
- echo 'export Cynet_username="your_Cynet_username"' >> ~/.bashrc\n
- echo 'export Cynet_password="your_Cynet_password"' >> ~/.bashrc\n
- echo 'export LINE_CHANNEL_SECRET="your_LINE_CHANNEL_SECRET"' >> ~/.bashrc\n
+ echo 'export Cynet_username="your_Cynet_username"' >> ~/.bashrc
+ 
+ echo 'export Cynet_password="your_Cynet_password"' >> ~/.bashrc
+ 
+ echo 'export LINE_CHANNEL_SECRET="your_LINE_CHANNEL_SECRET"' >> ~/.bashrc
+ 
  echo 'export LINE_CHANNEL_ACCESS_TOKEN="your_LINE_CHANNEL_ACCESS_TOKEN"' >> ~/.bashrc
