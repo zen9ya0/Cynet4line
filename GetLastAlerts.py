@@ -66,11 +66,47 @@ def save_client_db_ids(client_db_ids):
         for client_db_id in client_db_ids:
             f.write(f"{client_db_id}\n")
 
+def get_severity_text(severity):
+    """將 severity 數值轉換為對應的文字描述"""
+    severity_mapping = {
+        "5": "Critical",
+        "4": "High",
+        "3": "Medium",
+        "2": "Low",
+        "1": "Informative"
+    }
+    # 確保 severity 是字符串形式
+    severity_str = str(severity)
+    return severity_mapping.get(severity_str, severity_str)
+
+def load_client_mapping():
+    """從 mapping.conf 讀取 client_id 映射"""
+    client_mapping = {}
+    try:
+        with open('config/mapping.conf', 'r', encoding='utf-8') as f:
+            for line in f:
+                line = line.strip()
+                if line and '=' in line:
+                    # 使用 = 分隔，並去除空白
+                    client_id, name = [part.strip() for part in line.split('=', 1)]
+                    client_mapping[client_id] = name
+    except Exception as e:
+        logger.error(f"讀取 mapping.conf 時發生錯誤: {e}")
+        return {}
+    return client_mapping
+
+def get_client_name(client_id, client_mapping):
+    """獲取 client_id 對應的名稱"""
+    return client_mapping.get(str(client_id), str(client_id))
+
 def main():
     # 設置命令行參數解析
     parser = argparse.ArgumentParser(description='Fetch alerts from Cynet API.')
     parser.add_argument('-id', '--client_id', type=str, help='Specify a client ID to fetch alerts for a single client.')
     args = parser.parse_args()
+
+    # 加載 client_id 映射
+    client_mapping = load_client_mapping()
 
     # 使用命令行參數中的 client_id 或默認的 client_ids 列表
     if args.client_id:
@@ -80,59 +116,69 @@ def main():
 
     # 加載上次的 ClientDbId 值
     last_client_db_ids = load_last_client_db_ids()
-    current_client_db_ids = set()  # 用於存儲當前的 ClientDbId
-    processed_client_db_ids = set()  # 用於追踪已處理的 ClientDbId
+    current_client_db_ids = set()
+    processed_client_db_ids = set()
 
     # 遍歷每個 client_id 並獲取 Alerts 數據
     for client_id in selected_client_ids:
         alerts_data = fetch_alerts(client_id, access_token, time_offset_minutes)
         
+        # 調試輸出
+        logger.debug(f"Processing client_id: {client_id}")
+        logger.debug(f"Last client_db_ids: {last_client_db_ids}")
+        logger.debug(f"Processed client_db_ids: {processed_client_db_ids}")
+        
         # 檢查 Entities 是否存在且有資料
         if "Entities" in alerts_data and alerts_data["Entities"]:
-            # 將所需的訊息轉換為純文字格式
             alerts_text = ""
+            
+            # 調試輸出
+            logger.debug(f"Number of entities: {len(alerts_data['Entities'])}")
+            
             for entity in alerts_data["Entities"]:
-                # 獲取所需欄位
                 client_db_id = entity.get("ClientDbId")
+                
+                # 調試輸出
+                logger.debug(f"Processing ClientDbId: {client_db_id}")
                 
                 # 檢查 ClientDbId 是否已經處理過
                 if client_db_id is None or client_db_id in processed_client_db_ids:
+                    logger.debug(f"Skipping duplicate ClientDbId: {client_db_id}")
                     continue
 
-                # 如果是新的 ClientDbId 且不在上次的集合中
                 if client_db_id not in last_client_db_ids:
-                    severity = entity.get("Severity")
+                    severity = get_severity_text(entity.get("Severity"))  # 轉換 severity
                     incident_name = entity.get("IncidentName")
                     host_ip = entity.get("HostIp")
                     host_name = entity.get("HostName")
                     command_line = entity.get("CommandLine")
                     path = entity.get("Path")
-                    eps_last_seen_local = entity.get("EpsLastSeenLocal")
 
                     alerts_text += (
-                        f"警報名稱: {incident_name}\n"
+                        f"事件名稱: {incident_name}\n"
                         f"警報編號: {client_db_id}\n"
-                        f"警報嚴重性: {severity}\n"
+                        f"嚴重性: {severity}\n"
                         f"主機IP: {host_ip}\n"
                         f"主機名稱: {host_name}\n"
                         f"命令行: {command_line}\n"
-                        f"路徑: {path}\n"
-                        f"警報時間: {eps_last_seen_local}\n"
+                        f"檔案路徑: {path}\n"
                         "-------------------------\n"
                     )
+                    logger.debug(f"Adding new alert for ClientDbId: {client_db_id}")
                 
-                # 將 ClientDbId 添加到已處理集合和當前集合中
                 processed_client_db_ids.add(client_db_id)
                 current_client_db_ids.add(client_db_id)
 
-            # 只在這裡輸出一次
+            # 使用客戶名稱替代 client_id
+            client_name = get_client_name(client_id, client_mapping)
             if alerts_text:
-                print(f"{client_id} 的新警報:\n{alerts_text.rstrip()}")
+                print(f"{client_name} 的新警報:\n{alerts_text.rstrip()}")
             else:
-                #print(f"{client_id}: Nothing update")
+                #print(f"{client_name}: Nothing update")
                 pass
         else:
-            #print(f"{client_id}: Nothing update")
+            client_name = get_client_name(client_id, client_mapping)
+            #print(f"{client_name}: Nothing update")
             pass
 
     # 保存當前的 ClientDbId
